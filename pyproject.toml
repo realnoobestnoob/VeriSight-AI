@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verisight-ai"
+version = "0.1.0"
+description = "Evidence-aware media triage and scam-context assistant (triage aid, not an authenticity oracle)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2",
+  "torchvision>=0.17",
+  "pillow>=10.0",
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "plotly>=5.20",
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+  "sqlalchemy>=2.0",
+  "psycopg2-binary>=2.9",
+  "requests>=2.31",
+  "streamlit>=1.50",
+]
+
+[project.optional-dependencies]
+# Needed for the training / evaluation pipeline (not for serving the app).
+train = [
+  "mlflow>=2.14",
+  "scikit-learn>=1.4",
+  "scipy>=1.11",
+  "matplotlib>=3.8",
+  "psutil>=5.9",
+]
+dev = [
+  "verisight-ai[train]",
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+verisight = "verisight_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["slow: tests that train a tiny model end to end"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "I001"]

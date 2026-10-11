@@ -1,0 +1,60 @@
+# VeriSight AI pipeline configuration. Validated by verisight_ai.config.PipelineConfig.
+pipeline_version: "0.1.0"
+seed: 42
+output_dir: training_outputs
+
+data:
+  root: data/defactify               # expects train/{REAL,FAKE} and test/{REAL,FAKE}
+  dataset_name: Defactify
+  dataset_version: "unset — fill in your download date: YYYY-MM-DD"
+  dataset_source: "https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset"
+  val_fraction: 0.15              # carved out of the training folder, stratified
+  test_fraction: 0.15             # only used when the dataset has no official test folder
+  max_per_class: null             # set e.g. 5000 for a quick CPU experiment
+  near_duplicate_max_hamming: null  # optional aHash check; null = exact-hash check only
+  external_root: null             # independent evaluation set with the same REAL/FAKE layout
+  external_name: null
+
+model:
+  architecture: mobilenet_v3_small  # or efficientnet_b0
+  pretrained: true                  # ImageNet weights (downloaded by torchvision on first use)
+  image_size: 128
+
+train:
+  batch_size: 64
+  num_workers: 0                    # keep 0 on Windows unless you know you need more
+  device: auto                      # auto | cpu | cuda
+  weight_decay: 0.0001
+  head:
+    epochs: 3
+    lr: 0.001
+  finetune:
+    enabled: true
+    epochs: 5
+    lr: 0.0001
+    unfreeze_last_blocks: 4
+  early_stopping_patience: 2
+  class_weighting: true
+
+calibration:
+  enabled: true                     # temperature scaling, accepted only if validation NLL improves
+
+decision:
+  abstain_margin: 0.10              # scores within +/- margin of the threshold are "inconclusive"
+
+evaluation:
+  robustness_max_images: 1000
+  latency_warmup: 10
+  latency_runs: 100
+
+mlflow:
+  enabled: true
+  tracking_uri: sqlite:///mlflow.db
+  experiment_name: VeriSight AI
+
+release:
+  # Project-defined acceptance checks (not derived from data). Revisit after your baseline run.
+  min_test_roc_auc: 0.90
+  min_test_f1: 0.80
+  max_cpu_latency_p95_ms: null      # set after benchmarking the chosen host
+  require_external_eval: false

@@ -1,0 +1,60 @@
+# VeriSight AI — Defactify dataset config.
+# Run:  python -m verisight_ai.cli pipeline --config configs/defactify.yaml
+pipeline_version: "0.1.0"
+seed: 42
+output_dir: training_outputs
+
+data:
+  root: data/defactify          # populated by scripts/download_defactify.py
+  dataset_name: Defactify
+  dataset_version: "2026-10-11"
+  dataset_source: "https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset"
+  val_fraction: 0.15            # fraction carved from train/ (val/ folder if present is merged in)
+  test_fraction: 0.15
+  max_per_class: null
+  near_duplicate_max_hamming: null
+  external_root: null
+  external_name: null
+
+model:
+  architecture: mobilenet_v3_small
+  pretrained: true
+  image_size: 128               # Defactify images are natural-resolution COCO photos
+
+train:
+  batch_size: 64
+  num_workers: 4                # increase if you have multiple CPU cores
+  device: auto
+  weight_decay: 0.0001
+  head:
+    epochs: 3
+    lr: 0.001
+  finetune:
+    enabled: true
+    epochs: 5
+    lr: 0.0001
+    unfreeze_last_blocks: 4
+  early_stopping_patience: 2
+  class_weighting: true         # Defactify has ~5:1 FAKE:REAL ratio; weighting helps
+
+calibration:
+  enabled: true
+
+decision:
+  abstain_margin: 0.10
+
+evaluation:
+  robustness_max_images: 1000
+  latency_warmup: 10
+  latency_runs: 100
+
+mlflow:
+  enabled: true
+  tracking_uri: sqlite:///mlflow.db
+  experiment_name: VeriSight AI — Defactify
+
+release:
+  min_test_roc_auc: 0.90        # placeholder; revisit after your first baseline
+  min_test_f1: 0.80
+  max_cpu_latency_p95_ms: null
+  require_external_eval: false

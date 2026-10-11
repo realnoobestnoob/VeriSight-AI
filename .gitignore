@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+training_outputs/
+mlruns/
+mlflow.db
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+model_artifacts/releases/
+model_artifacts/current.json
+model_artifacts/release_history.jsonl
+*.log

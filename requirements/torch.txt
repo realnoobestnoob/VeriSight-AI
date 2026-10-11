@@ -1,0 +1,5 @@
+# CPU PyTorch is installed separately so Docker/CI can use the CPU wheel index:
+#   pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements/torch.txt
+# On Windows/macOS the default PyPI wheels are already CPU builds.
+torch==2.14.1
+torchvision==0.29.1
