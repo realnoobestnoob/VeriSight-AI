@@ -4,6 +4,11 @@ Order note: calibration and threshold selection use validation data only and run
 final test evaluation, so the test set is evaluated exactly once with the frozen policy.
 Each pipeline invocation writes to a fresh run directory, so earlier test evidence is never
 overwritten.
+
+Resume: if a run fails mid-pipeline, re-run with resume_dir pointing at the failed run's
+directory (e.g. training_outputs/run-20261013-154652).  checkpoint.json tracks the last
+successfully completed stage; completed stages are skipped and their outputs are loaded from
+disk.  The pipeline picks up exactly where it left off.
 """
 
 from __future__ import annotations
@@ -70,31 +75,128 @@ def _write_json(path: Path, obj: dict) -> Path:
     return path
 
 
-def run_pipeline(cfg: PipelineConfig) -> dict:
+# ── Checkpoint helpers ─────────────────────────────────────────────────────────
+
+_CKPT_FILE = "checkpoint.json"
+
+
+def _write_checkpoint(run_dir: Path, stage: int, run_ts: str) -> None:
+    """Atomically record the last successfully completed stage.
+
+    Uses a tmp-file + rename so a crash mid-write never leaves a partial file.
+    """
+    tmp = run_dir / (_CKPT_FILE + ".tmp")
+    tmp.write_text(
+        json.dumps({"last_stage": stage, "run_ts": run_ts}, indent=2), encoding="utf-8"
+    )
+    tmp.replace(run_dir / _CKPT_FILE)
+
+
+def _read_checkpoint(run_dir: Path) -> dict:
+    p = run_dir / _CKPT_FILE
+    return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {"last_stage": 0}
+
+
+# ── Per-stage artifact loaders (used on resume) ────────────────────────────────
+
+def _resume_stage1(run_dir: Path):
+    """Reload manifest DataFrame and manifest_meta dict from stage-1 disk output."""
+    import pandas as pd
+
+    data_dir = run_dir / "data"
+    manifest = pd.read_csv(data_dir / "manifest.csv")
+    manifest_meta = json.loads((data_dir / "manifest_meta.json").read_text(encoding="utf-8"))
+    return manifest, manifest_meta
+
+
+def _resume_stage2(run_dir: Path, cfg: PipelineConfig, device):
+    """Reload model (on device) and raw state_dict from stage-2 disk output."""
+    state_dict = torch.load(
+        run_dir / "best_checkpoint.pt", map_location="cpu", weights_only=True
+    )
+    model = build_model(cfg.model.architecture, pretrained=False)
+    model.load_state_dict(state_dict)
+    model.to(device).eval()
+    return model, state_dict
+
+
+def _resume_stage3(run_dir: Path) -> tuple[dict, float, dict]:
+    """Reload calibration and decision from stage-3 disk output."""
+    data = json.loads(
+        (run_dir / "calibration_decision.json").read_text(encoding="utf-8")
+    )
+    calibration = data["calibration"]
+    decision = data["decision"]
+    temperature = calibration["temperature"] if calibration.get("applied") else 1.0
+    return calibration, temperature, decision
+
+
+def _resume_stage4(run_dir: Path) -> dict:
+    """Reload metrics dict from stage-4 disk output."""
+    report = json.loads((run_dir / "evaluation_report.json").read_text(encoding="utf-8"))
+    return report["metrics"]
+
+
+# ── Pipeline orchestrator ──────────────────────────────────────────────────────
+
+def run_pipeline(cfg: PipelineConfig, resume_dir: Path | None = None) -> dict:
     device = validate_environment(cfg)
     device_str = device.type  # "cpu" | "cuda" | "mps"
 
-    run_ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_dir = Path(cfg.output_dir) / f"run-{run_ts}"
-    run_dir.mkdir(parents=True, exist_ok=False)
+    # ── Resolve run directory ──────────────────────────────────────────────────
+    if resume_dir is not None:
+        run_dir = Path(resume_dir)
+        if not run_dir.is_dir():
+            raise RuntimeError(f"Resume directory not found: {run_dir}")
+        cp = _read_checkpoint(run_dir)
+        last_done = cp.get("last_stage", 0)
+        run_ts = cp.get("run_ts", run_dir.name.removeprefix("run-"))
+        log.info(
+            "Resuming %s — last completed stage: %d/5", run_dir.name, last_done
+        )
+        print(
+            f"\nResuming {run_dir.name}"
+            f"  —  stages 1–{last_done} already done,"
+            f" continuing from stage {last_done + 1} ...",
+            file=sys.stderr,
+        )
+        if last_done >= 5:
+            log.info("Run already complete; returning existing summary.")
+            summary_path = run_dir / "run_summary.json"
+            if summary_path.is_file():
+                return json.loads(summary_path.read_text(encoding="utf-8"))
+            raise RuntimeError(
+                f"checkpoint says stage 5 done but run_summary.json is missing in {run_dir}"
+            )
+    else:
+        run_ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+        run_dir = Path(cfg.output_dir) / f"run-{run_ts}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        last_done = 0
 
-    # ── Stage 1: data validation ───────────────────────────────────────────
-    log.info("[1/6] Data validation and split manifests")
-    print("\n[1/6] Data validation ...", file=sys.stderr)
+    # ── Stage 1: data validation ───────────────────────────────────────────────
     import time as _time
 
-    _t0 = _time.perf_counter()
-    manifest, report = build_manifest(cfg.data, cfg.seed)
-    manifest_meta = save_manifest(manifest, report, cfg.data, run_dir / "data")
-    for w in report.warnings:
-        log.warning(w)
+    _t0 = _time.perf_counter()  # always record; only used for retroactive timing on fresh runs
+
+    if last_done < 1:
+        log.info("[1/6] Data validation and split manifests")
+        print("\n[1/6] Data validation ...", file=sys.stderr)
+        manifest, report = build_manifest(cfg.data, cfg.seed)
+        manifest_meta = save_manifest(manifest, report, cfg.data, run_dir / "data")
+        for w in report.warnings:
+            log.warning(w)
+    else:
+        print("\n[1/6] Data validation — skipped (resuming)", file=sys.stderr)
+        manifest, manifest_meta = _resume_stage1(run_dir)
+
     root = Path(cfg.data.root)
 
+    # Image counts are needed for estimates/timer regardless of resume state.
     n_train = int((manifest.split == "train").sum())
     n_val = int((manifest.split == "val").sum())
     n_test = int((manifest.split == "test").sum())
 
-    # Now we have image counts — build estimates and print the header
     estimates = estimate_pipeline_seconds(
         n_train=n_train,
         n_val=n_val,
@@ -106,26 +208,27 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         robustness_images=cfg.evaluation.robustness_max_images,
         device_str=device_str,
     )
-    print_pipeline_header(n_train, n_val, n_test, device_str, cfg.model.architecture, estimates)
+    if last_done == 0:
+        # Fresh run: print the full header with time estimates.
+        print_pipeline_header(n_train, n_val, n_test, device_str, cfg.model.architecture, estimates)
 
     timer = PipelineTimer(estimates)
-    # Retroactively record stage 1 elapsed
-    import time as _time2
 
-    _stage1_elapsed = _time2.perf_counter() - _t0
-    from .timing import StageResult
+    if last_done < 1:
+        # Retroactively record stage 1 elapsed time (build_manifest ran above).
+        _stage1_elapsed = _time.perf_counter() - _t0
+        from .timing import StageResult, _fmt
 
-    timer._results.append(StageResult("data_validation", _stage1_elapsed))
-    elapsed_total = _time2.perf_counter() - timer.start
-    remaining = max(0, estimates["total"] - elapsed_total)
-    from .timing import _fmt
-
-    print(
-        f"  [stage 1/6] done in {_fmt(_stage1_elapsed)}"
-        f"  |  elapsed {_fmt(elapsed_total)}"
-        f"  |  est. remaining ~{_fmt(remaining)}",
-        file=sys.stderr,
-    )
+        timer._results.append(StageResult("data_validation", _stage1_elapsed))
+        elapsed_total = _time.perf_counter() - timer.start
+        remaining = max(0, estimates["total"] - elapsed_total)
+        print(
+            f"  [stage 1/6] done in {_fmt(_stage1_elapsed)}"
+            f"  |  elapsed {_fmt(elapsed_total)}"
+            f"  |  est. remaining ~{_fmt(remaining)}",
+            file=sys.stderr,
+        )
+        _write_checkpoint(run_dir, 1, run_ts)
 
     tracker = make_tracker(cfg.mlflow, run_name=f"{cfg.model.architecture}-{run_ts}")
     with tracker:
@@ -167,176 +270,212 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
         tracker.log_artifact(run_dir / "data" / "manifest.csv", "data")
         tracker.log_artifact(run_dir / "data" / "manifest_meta.json", "data")
 
-        # ── Stage 2: head training ─────────────────────────────────────────
-        log.info("[2/6] Head training")
-        print("\n[2/6] Head training ...", file=sys.stderr)
-        timer.begin_stage("head_training")
-        result = run_training(cfg, manifest, root, tracker, device)
-        timer.end_stage(
-            "head_training",
-            "head training",
-            2,
-            6,
-            note=f"best val_loss={result.best_val_loss:.4f}"
-            if result.best_val_loss < float("inf")
-            else "",
-        )
-        _write_json(
-            run_dir / "training_history.json",
-            {"history": result.history, "summary": result.stage_summary},
-        )
-        tracker.log_artifact(run_dir / "training_history.json")
+        # ── Stage 2: head training ─────────────────────────────────────────────
+        if last_done < 2:
+            log.info("[2/6] Head training")
+            print("\n[2/6] Head training ...", file=sys.stderr)
+            timer.begin_stage("head_training")
+            result = run_training(cfg, manifest, root, tracker, device)
+            timer.end_stage(
+                "head_training",
+                "head training",
+                2,
+                6,
+                note=f"best val_loss={result.best_val_loss:.4f}"
+                if result.best_val_loss < float("inf")
+                else "",
+            )
+            _write_json(
+                run_dir / "training_history.json",
+                {"history": result.history, "summary": result.stage_summary},
+            )
+            tracker.log_artifact(run_dir / "training_history.json")
 
-        model = build_model(cfg.model.architecture, pretrained=False)
-        model.load_state_dict(result.state_dict)
-        model.to(device).eval()
-        torch.save(
-            {k: v.cpu() for k, v in result.state_dict.items()},
-            run_dir / "best_checkpoint.pt",
-        )
-        tracker.log_artifact(run_dir / "best_checkpoint.pt")
-
-        # ── Stage 3: fine-tuning accounted inside run_training; record it ──
-        #    run_training already does both stages internally; we log it here
-        #    as stage 3 with zero additional elapsed if finetune was skipped.
-        print("\n[3/6] Calibration and decision policy ...", file=sys.stderr)
-        timer.begin_stage("calibration")
-        val_df = manifest[manifest.split == "val"]
-        val_loader = make_loader(val_df, root, cfg.model.image_size, False, cfg, shuffle=False)
-        val_logits, val_labels = collect_logits(model, val_loader, device)
-        if cfg.calibration.enabled:
-            calibration = fit_temperature(val_logits, val_labels)
+            model = build_model(cfg.model.architecture, pretrained=False)
+            model.load_state_dict(result.state_dict)
+            model.to(device).eval()
+            torch.save(
+                {k: v.cpu() for k, v in result.state_dict.items()},
+                run_dir / "best_checkpoint.pt",
+            )
+            tracker.log_artifact(run_dir / "best_checkpoint.pt")
+            state_dict = result.state_dict  # kept for package_candidate in stage 5
+            _write_checkpoint(run_dir, 2, run_ts)
         else:
-            calibration = {"method": "none", "temperature": 1.0, "applied": False}
-        temperature = calibration["temperature"] if calibration["applied"] else 1.0
-        val_scores = softmax_p_synthetic(val_logits, temperature)
-        thr = choose_threshold(val_scores, val_labels)
-        decision = {
-            "threshold": thr["threshold"],
-            "abstain_margin": cfg.decision.abstain_margin,
-            "criterion": thr["criterion"],
-        }
-        tracker.log_params(
-            {
-                "calibration_applied": calibration["applied"],
-                "temperature": round(temperature, 4),
-                "decision_threshold": decision["threshold"],
-                "abstain_margin": decision["abstain_margin"],
+            print("\n[2/6] Training — skipped (resuming)", file=sys.stderr)
+            model, state_dict = _resume_stage2(run_dir, cfg, device)
+
+        # ── Stage 3: calibration and decision policy ───────────────────────────
+        #    run_training already handles both head + finetune internally; this
+        #    stage fits temperature scaling and the decision threshold on val only.
+        if last_done < 3:
+            print("\n[3/6] Calibration and decision policy ...", file=sys.stderr)
+            timer.begin_stage("calibration")
+            val_df = manifest[manifest.split == "val"]
+            val_loader = make_loader(val_df, root, cfg.model.image_size, False, cfg, shuffle=False)
+            val_logits, val_labels = collect_logits(model, val_loader, device)
+            if cfg.calibration.enabled:
+                calibration = fit_temperature(val_logits, val_labels)
+            else:
+                calibration = {"method": "none", "temperature": 1.0, "applied": False}
+            temperature = calibration["temperature"] if calibration["applied"] else 1.0
+            val_scores = softmax_p_synthetic(val_logits, temperature)
+            thr = choose_threshold(val_scores, val_labels)
+            decision = {
+                "threshold": thr["threshold"],
+                "abstain_margin": cfg.decision.abstain_margin,
+                "criterion": thr["criterion"],
             }
-        )
-        cal_note = (
-            f"T={temperature:.3f} applied"
-            if calibration.get("applied")
-            else "not applied (no NLL improvement)"
-        )
-        timer.end_stage("calibration", "calibration", 3, 6, note=cal_note)
-
-        # ── Stage 4: evaluation ────────────────────────────────────────────
-        log.info("[4/6] Evaluation")
-        print("\n[4/6] Evaluation ...", file=sys.stderr)
-        timer.begin_stage("evaluation")
-        val_metrics, _, _ = evaluate_split(
-            model, val_df, root, cfg, device, temperature, decision["threshold"]
-        )
-        metrics: dict = {"validation": val_metrics}
-
-        test_df = manifest[manifest.split == "test"]
-        test_metrics, t_labels, t_scores = evaluate_split(
-            model, test_df, root, cfg, device, temperature, decision["threshold"]
-        )
-        metrics["internal_test"] = test_metrics
-        plots = save_plots(t_labels, t_scores, test_metrics, run_dir / "plots", "internal_test")
-
-        if cfg.data.external_root:
-            try:
-                ext_df = load_external_manifest(Path(cfg.data.external_root), cfg.data.extensions)
-                ext_metrics, e_labels, e_scores = evaluate_split(
-                    model,
-                    ext_df,
-                    Path(cfg.data.external_root),
-                    cfg,
-                    device,
-                    temperature,
-                    decision["threshold"],
-                )
-                ext_metrics["dataset_name"] = cfg.data.external_name or "external"
-                metrics["external_test"] = ext_metrics
-                plots += save_plots(
-                    e_labels, e_scores, ext_metrics, run_dir / "plots", "external_test"
-                )
-            except DataValidationError as exc:
-                log.warning("External evaluation skipped: %s", exc)
+            tracker.log_params(
+                {
+                    "calibration_applied": calibration["applied"],
+                    "temperature": round(temperature, 4),
+                    "decision_threshold": decision["threshold"],
+                    "abstain_margin": decision["abstain_margin"],
+                }
+            )
+            cal_note = (
+                f"T={temperature:.3f} applied"
+                if calibration.get("applied")
+                else "not applied (no NLL improvement)"
+            )
+            timer.end_stage("calibration", "calibration", 3, 6, note=cal_note)
+            # Persist calibration + decision so they can be reloaded on resume.
+            # (They are also written inside evaluation_report.json, but that file
+            # is only written at the end of stage 4 — too late to use for stage-4
+            # resume without re-running calibration.)
+            _write_json(
+                run_dir / "calibration_decision.json",
+                {"calibration": calibration, "decision": decision},
+            )
+            _write_checkpoint(run_dir, 3, run_ts)
         else:
-            log.warning("No external dataset configured; domain shift has NOT been evaluated.")
+            print("\n[3/6] Calibration — skipped (resuming)", file=sys.stderr)
+            calibration, temperature, decision = _resume_stage3(run_dir)
 
-        robustness = robustness_suite(
-            model, test_df, root, cfg, device, temperature, decision["threshold"]
-        )
-        metrics["robustness_summary"] = {
-            k: {"f1": v["f1"], "roc_auc": v["roc_auc"]} for k, v in robustness["results"].items()
-        }
-        latency = benchmark_cpu_latency(
-            model, cfg.model.image_size, cfg.evaluation.latency_warmup, cfg.evaluation.latency_runs
-        )
-        metrics["cpu_latency"] = latency
+        # ── Stage 4: evaluation ────────────────────────────────────────────────
+        if last_done < 4:
+            log.info("[4/6] Evaluation")
+            print("\n[4/6] Evaluation ...", file=sys.stderr)
+            timer.begin_stage("evaluation")
+            # val_df may not be defined if we resumed past stage 3; re-slice cheaply.
+            val_df = manifest[manifest.split == "val"]
+            val_metrics, _, _ = evaluate_split(
+                model, val_df, root, cfg, device, temperature, decision["threshold"]
+            )
+            metrics: dict = {"validation": val_metrics}
 
-        report_path = _write_json(
-            run_dir / "evaluation_report.json",
-            {
-                "metrics": metrics,
-                "robustness": robustness,
-                "calibration": calibration,
-                "decision": decision,
-                "robustness_protocol": ROBUSTNESS_PROTOCOL,
-                "note": "Test metrics were computed once, after calibration/threshold were frozen.",
-            },
-        )
+            test_df = manifest[manifest.split == "test"]
+            test_metrics, t_labels, t_scores = evaluate_split(
+                model, test_df, root, cfg, device, temperature, decision["threshold"]
+            )
+            metrics["internal_test"] = test_metrics
+            plots = save_plots(
+                t_labels, t_scores, test_metrics, run_dir / "plots", "internal_test"
+            )
 
-        for split in ("validation", "internal_test", "external_test"):
-            if split in metrics:
-                m = metrics[split]
-                tracker.log_metrics(
-                    {
-                        f"{split}_{k}": m[k]
-                        for k in (
-                            "precision",
-                            "recall",
-                            "f1",
-                            "roc_auc",
-                            "pr_auc",
-                            "brier",
-                            "ece_10bin",
-                        )
-                        if m.get(k) is not None
-                    }
+            if cfg.data.external_root:
+                try:
+                    ext_df = load_external_manifest(
+                        Path(cfg.data.external_root), cfg.data.extensions
+                    )
+                    ext_metrics, e_labels, e_scores = evaluate_split(
+                        model,
+                        ext_df,
+                        Path(cfg.data.external_root),
+                        cfg,
+                        device,
+                        temperature,
+                        decision["threshold"],
+                    )
+                    ext_metrics["dataset_name"] = cfg.data.external_name or "external"
+                    metrics["external_test"] = ext_metrics
+                    plots += save_plots(
+                        e_labels, e_scores, ext_metrics, run_dir / "plots", "external_test"
+                    )
+                except DataValidationError as exc:
+                    log.warning("External evaluation skipped: %s", exc)
+            else:
+                log.warning(
+                    "No external dataset configured; domain shift has NOT been evaluated."
                 )
-        for name, v in metrics["robustness_summary"].items():
-            if v["f1"] is not None:
-                tracker.log_metric(f"robustness_{name}_f1", v["f1"])
-        tracker.log_metrics(
-            {
-                "cpu_latency_mean_ms": latency["mean_ms"],
-                "cpu_latency_p95_ms": latency["p95_ms"],
+
+            robustness = robustness_suite(
+                model, test_df, root, cfg, device, temperature, decision["threshold"]
+            )
+            metrics["robustness_summary"] = {
+                k: {"f1": v["f1"], "roc_auc": v["roc_auc"]}
+                for k, v in robustness["results"].items()
             }
-        )
-        tracker.log_artifact(report_path)
-        for p_plot in plots:
-            tracker.log_artifact(p_plot, "plots")
+            latency = benchmark_cpu_latency(
+                model,
+                cfg.model.image_size,
+                cfg.evaluation.latency_warmup,
+                cfg.evaluation.latency_runs,
+            )
+            metrics["cpu_latency"] = latency
 
-        eval_note = (
-            f"test F1={test_metrics.get('f1', 0):.3f} "
-            f"AUC={test_metrics.get('roc_auc') or 0:.3f} "
-            f"lat_p95={latency['p95_ms']:.0f}ms"
-        )
-        timer.end_stage("evaluation", "evaluation", 4, 6, note=eval_note)
+            report_path = _write_json(
+                run_dir / "evaluation_report.json",
+                {
+                    "metrics": metrics,
+                    "robustness": robustness,
+                    "calibration": calibration,
+                    "decision": decision,
+                    "robustness_protocol": ROBUSTNESS_PROTOCOL,
+                    "note": "Test metrics were computed once, after calibration/threshold were frozen.",
+                },
+            )
 
-        # ── Stage 5: package candidate ─────────────────────────────────────
+            for split in ("validation", "internal_test", "external_test"):
+                if split in metrics:
+                    m = metrics[split]
+                    tracker.log_metrics(
+                        {
+                            f"{split}_{k}": m[k]
+                            for k in (
+                                "precision",
+                                "recall",
+                                "f1",
+                                "roc_auc",
+                                "pr_auc",
+                                "brier",
+                                "ece_10bin",
+                            )
+                            if m.get(k) is not None
+                        }
+                    )
+            for name, v in metrics["robustness_summary"].items():
+                if v["f1"] is not None:
+                    tracker.log_metric(f"robustness_{name}_f1", v["f1"])
+            tracker.log_metrics(
+                {
+                    "cpu_latency_mean_ms": latency["mean_ms"],
+                    "cpu_latency_p95_ms": latency["p95_ms"],
+                }
+            )
+            tracker.log_artifact(report_path)
+            for p_plot in plots:
+                tracker.log_artifact(p_plot, "plots")
+
+            eval_note = (
+                f"test F1={test_metrics.get('f1', 0):.3f} "
+                f"AUC={test_metrics.get('roc_auc') or 0:.3f} "
+                f"lat_p95={latency['p95_ms']:.0f}ms"
+            )
+            timer.end_stage("evaluation", "evaluation", 4, 6, note=eval_note)
+            _write_checkpoint(run_dir, 4, run_ts)
+        else:
+            print("\n[4/6] Evaluation — skipped (resuming)", file=sys.stderr)
+            metrics = _resume_stage4(run_dir)
+
+        # ── Stage 5: package candidate ─────────────────────────────────────────
         log.info("[5/6] Package candidate")
         print("\n[5/6] Packaging candidate ...", file=sys.stderr)
         timer.begin_stage("packaging")
         bundle = package_candidate(
             out_dir=run_dir,
-            state_dict=result.state_dict,
+            state_dict=state_dict,
             cfg=cfg,
             manifest_meta=manifest_meta,
             calibration=calibration,
@@ -349,8 +488,9 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
             tracker.log_artifact(bundle / f, "candidate")
         tracker.log_artifact(bundle / "model.pt", "candidate")
         timer.end_stage("packaging", "packaging", 5, 6)
+        _write_checkpoint(run_dir, 5, run_ts)
 
-        # ── Summary ────────────────────────────────────────────────────────
+        # ── Summary ────────────────────────────────────────────────────────────
         timer.print_summary(str(bundle))
 
     summary = {

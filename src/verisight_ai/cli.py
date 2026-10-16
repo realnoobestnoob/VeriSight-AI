@@ -16,6 +16,13 @@ def _cmd_pipeline(args) -> int:
     from .pipeline import run_pipeline
 
     cfg = load_config(args.config)
+
+    resume_dir = Path(args.resume) if getattr(args, "resume", None) else None
+
+    if args.demo and resume_dir:
+        print("error: --demo and --resume are mutually exclusive", file=sys.stderr)
+        return 2
+
     if args.demo:  # tiny synthetic smoke run, overrides heavy settings
         from .demo_data import make_demo_dataset
 
@@ -30,7 +37,8 @@ def _cmd_pipeline(args) -> int:
             f"sqlite:///{(Path(cfg.output_dir) / 'mlflow_demo.db').as_posix()}"
         )
         cfg.mlflow.experiment_name = "VeriSight AI (demo smoke)"
-    summary = run_pipeline(cfg)
+
+    summary = run_pipeline(cfg, resume_dir=resume_dir)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -105,6 +113,16 @@ def main(argv: list[str] | None = None) -> int:
         "--demo",
         action="store_true",
         help="Run on a tiny synthetic dataset (smoke test only; proves nothing)",
+    )
+    sp.add_argument(
+        "--resume",
+        metavar="RUN_DIR",
+        help=(
+            "Resume a failed run from its last checkpoint. "
+            "Pass the failed run's directory, e.g. "
+            "training_outputs/run-20261013-154652. "
+            "Completed stages are skipped; their outputs are loaded from disk."
+        ),
     )
     sp.set_defaults(fn=_cmd_pipeline)
 

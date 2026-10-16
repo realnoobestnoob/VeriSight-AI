@@ -139,14 +139,29 @@ def _resize_roundtrip(img: Image.Image) -> Image.Image:
     return small.resize((w, h), Image.BILINEAR)
 
 
-def _jpeg(quality: int):
-    def f(img: Image.Image) -> Image.Image:
+class _JpegReencode:
+    """Picklable JPEG re-encode transform.
+
+    A nested closure (the previous implementation) is not picklable under
+    Python 3.14's default 'forkserver' multiprocessing start method, which
+    causes DataLoader worker spawning to fail with a PicklingError.  A
+    top-level class instance is always picklable.
+    """
+
+    __slots__ = ("quality",)
+
+    def __init__(self, quality: int) -> None:
+        self.quality = quality
+
+    def __call__(self, img: Image.Image) -> Image.Image:
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=quality)
+        img.save(buf, format="JPEG", quality=self.quality)
         buf.seek(0)
         return Image.open(buf).convert("RGB")
 
-    return f
+
+def _jpeg(quality: int) -> _JpegReencode:
+    return _JpegReencode(quality)
 
 
 def _center_crop_80(img: Image.Image) -> Image.Image:
