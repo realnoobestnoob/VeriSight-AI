@@ -7,13 +7,13 @@ import logging
 
 import streamlit as st
 
-from verisight_ai.config import AppSettings
-from verisight_ai.database import make_repository
-from verisight_ai.explainability import GRADCAM_CAVEAT
-from verisight_ai.inference import ModelUnavailableError, Predictor, resolve_bundle_dir
-from verisight_ai.logging_setup import setup_logging
-from verisight_ai.preprocessing import InvalidImageError, decode_image_bytes
-from verisight_ai.schemas import DecisionStatus
+from src.verisight_ai.config import AppSettings
+from src.verisight_ai.database import make_repository
+from src.verisight_ai.explainability import GRADCAM_CAVEAT
+from src.verisight_ai.inference import ModelUnavailableError, Predictor, resolve_bundle_dir
+from src.verisight_ai.logging_setup import setup_logging
+from src.verisight_ai.preprocessing import InvalidImageError, decode_image_bytes
+from src.verisight_ai.schemas import DecisionStatus
 
 setup_logging()
 log = logging.getLogger("verisight.app")
