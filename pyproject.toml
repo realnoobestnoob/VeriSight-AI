@@ -33,7 +33,11 @@ train = [
   "psutil>=5.9",
 ]
 dev = [
-  "verisight-ai[train]",
+  "mlflow>=2.14",
+  "scikit-learn>=1.4",
+  "scipy>=1.11",
+  "matplotlib>=3.8",
+  "psutil>=5.9",
   "pytest>=8.0",
   "ruff>=0.5",
 ]
