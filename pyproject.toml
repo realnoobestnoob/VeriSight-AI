@@ -46,7 +46,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow'"
 markers = ["slow: tests that train a tiny model end to end"]
 
 [tool.ruff]

@@ -1,8 +1,13 @@
 """Dataset validation, split manifests and leakage checks.
 
-Expected layout: <root>/train/{REAL,FAKE}/ and <root>/test/{REAL,FAKE}/.
-If the dataset has no train/test folders but has <root>/{REAL,FAKE}, a stratified
-train/val/test split is generated. Data is never downloaded automatically.
+Supported layouts:
+  1. <root>/train/{REAL,FAKE}/, <root>/val/{REAL,FAKE}/, <root>/test/{REAL,FAKE}/
+     Official splits used as-is (Defactify layout).
+  2. <root>/train/{REAL,FAKE}/, <root>/test/{REAL,FAKE}/  (no val/ folder)
+     Val is carved from train with a seeded stratified split.
+  3. <root>/{REAL,FAKE}/  (flat layout, no split folders)
+     Seeded stratified train/val/test split generated from scratch.
+Data is never downloaded automatically.
 """
 
 from __future__ import annotations
@@ -115,7 +120,9 @@ def build_manifest(cfg: DataConfig, seed: int) -> tuple[pd.DataFrame, DataReport
             "run `python -m verisight_ai.cli demo-data` to create a tiny synthetic smoke dataset."
         )
     report = DataReport()
-    train_dir, test_dir = _class_dir_any(root, "train"), _class_dir_any(root, "test")
+    train_dir = _class_dir_any(root, "train")
+    val_dir = _class_dir_any(root, "val")
+    test_dir = _class_dir_any(root, "test")
     frames = []
     if train_dir is not None and test_dir is not None:
         train_items = _subsample(
@@ -126,19 +133,44 @@ def build_manifest(cfg: DataConfig, seed: int) -> tuple[pd.DataFrame, DataReport
         )
         train_items = _drop_corrupt(train_items, report)
         test_items = _drop_corrupt(test_items, report)
-        labels = [CLASS_MAPPING[c] for _, c in train_items]
-        if len(set(labels)) < 2:
-            raise DataValidationError("Training data must contain both REAL and FAKE images.")
-        idx_train, idx_val = train_test_split(
-            np.arange(len(train_items)),
-            test_size=cfg.val_fraction,
-            stratify=labels,
-            random_state=seed,
-        )
-        frames += [
-            _frame(train_items, idx_train, "train", root),
-            _frame(train_items, idx_val, "val", root),
-        ]
+
+        if val_dir is not None:
+            # Layout 1: official train/val/test folders present — use them as-is.
+            val_items = _subsample(
+                _scan_split_folder(val_dir, cfg.extensions), cfg.max_per_class, seed
+            )
+            val_items = _drop_corrupt(val_items, report)
+            val_labels = [CLASS_MAPPING[c] for _, c in val_items]
+            if len(set(val_labels)) < 2:
+                raise DataValidationError("Val data must contain both REAL and FAKE images.")
+            log.info(
+                "Official val/ folder found — using as-is (%d images).", len(val_items)
+            )
+            frames += [
+                _frame(train_items, np.arange(len(train_items)), "train", root),
+                _frame(val_items, np.arange(len(val_items)), "val", root),
+            ]
+        else:
+            # Layout 2: no val/ folder — carve val from train.
+            labels = [CLASS_MAPPING[c] for _, c in train_items]
+            if len(set(labels)) < 2:
+                raise DataValidationError("Training data must contain both REAL and FAKE images.")
+            idx_train, idx_val = train_test_split(
+                np.arange(len(train_items)),
+                test_size=cfg.val_fraction,
+                stratify=labels,
+                random_state=seed,
+            )
+            log.info(
+                "No val/ folder — carved from train/ (%d train, %d val).",
+                len(idx_train),
+                len(idx_val),
+            )
+            frames += [
+                _frame(train_items, idx_train, "train", root),
+                _frame(train_items, idx_val, "val", root),
+            ]
+
         frames.append(_frame(test_items, np.arange(len(test_items)), "test", root))
     else:
         items = _subsample(_scan_split_folder(root, cfg.extensions), cfg.max_per_class, seed)

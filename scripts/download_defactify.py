@@ -30,8 +30,8 @@ HF_SPLIT_MAP = {
 def download(out: Path, splits: list[str], max_per_split: int | None) -> None:
     try:
         from datasets import load_dataset
-    except ImportError:
-        raise SystemExit("Install the datasets library first:  pip install datasets")
+    except ImportError as exc:
+        raise SystemExit("Install the datasets library first:  pip install datasets") from exc
 
     try:
         from tqdm.auto import tqdm

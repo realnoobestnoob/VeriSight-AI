@@ -1,0 +1,149 @@
+{
+  "model_release_id": "mobilenet_v3_small-20261016054105-e5987b6b",
+  "architecture": "mobilenet_v3_small",
+  "pretrained_weights": "MobileNet_V3_Small_Weights.DEFAULT",
+  "class_mapping": {
+    "REAL": 0,
+    "FAKE": 1
+  },
+  "preprocessing": {
+    "image_size": 128,
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "color": "RGB",
+    "resize": "bilinear"
+  },
+  "calibration": {
+    "method": "temperature_scaling",
+    "temperature": 1.4920044795254876,
+    "val_nll_before": 0.23487770270710884,
+    "val_nll_after": 0.2173177779054503,
+    "applied": true
+  },
+  "decision": {
+    "threshold": 0.303069,
+    "abstain_margin": 0.1,
+    "criterion": "max validation F1 (no assumed preference between FP and FN)"
+  },
+  "dataset": {
+    "dataset_name": "Defactify",
+    "dataset_version": "2026-10-11",
+    "dataset_source": "https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset",
+    "manifest_sha256": "e5987b6bdc5cb059221e4faa0c4292640db070ae3a2f83195cac595e4625082b"
+  },
+  "mlflow_run_id": "63471e0d7a0c449d84db380b8d6827a2",
+  "git_commit": "f06f664ad71c77b21bdbbe201c74e2f06bef5a70",
+  "pipeline_version": "0.1.0",
+  "package_versions": {
+    "python": "3.14.4",
+    "torch": "2.14.1+cpu",
+    "torchvision": "0.29.1+cpu",
+    "numpy": "2.4.6",
+    "pandas": "3.0.6",
+    "pillow": "12.3.0",
+    "scikit-learn": "1.9.1",
+    "mlflow": "3.17.0",
+    "streamlit": "1.65.0",
+    "pydantic": "2.14.0",
+    "sqlalchemy": "2.1.4"
+  },
+  "artifact_sha256": "cf3855017bbbb1717ae66865ad64c3e0a6d275ee67a3b7d7f0696c7684918a21",
+  "metrics_summary": {
+    "validation": {
+      "n": 6292,
+      "threshold": 0.303069,
+      "precision": 0.9348743349844065,
+      "recall": 0.9721480351011065,
+      "f1": 0.9531469185448425,
+      "accuracy": 0.9203750794659885,
+      "brier": 0.06600395790312819,
+      "ece_10bin": 0.03962062597214507,
+      "confusion_matrix": [
+        [
+          695,
+          355
+        ],
+        [
+          146,
+          5096
+        ]
+      ],
+      "confusion_matrix_labels": [
+        "REAL",
+        "FAKE"
+      ],
+      "roc_auc": 0.9466908304718302,
+      "pr_auc": 0.9879156127789093
+    },
+    "internal_test": {
+      "n": 45000,
+      "threshold": 0.303069,
+      "precision": 0.9447668171072426,
+      "recall": 0.9378133333333334,
+      "f1": 0.9412772335528077,
+      "accuracy": 0.9024888888888889,
+      "brier": 0.08755954510294917,
+      "ece_10bin": 0.09362762397487279,
+      "confusion_matrix": [
+        [
+          5444,
+          2056
+        ],
+        [
+          2332,
+          35168
+        ]
+      ],
+      "confusion_matrix_labels": [
+        "REAL",
+        "FAKE"
+      ],
+      "roc_auc": 0.9385597724444444,
+      "pr_auc": 0.9863472992930232
+    },
+    "robustness_summary": {
+      "unaltered_subset": {
+        "f1": 0.9551886792452831,
+        "roc_auc": 0.9476942651439921
+      },
+      "resize_half_roundtrip": {
+        "f1": 0.9532163742690059,
+        "roc_auc": 0.936987959285005
+      },
+      "jpeg_q75": {
+        "f1": 0.9568812758417011,
+        "roc_auc": 0.9476942651439921
+      },
+      "jpeg_q50": {
+        "f1": 0.9406830437387658,
+        "roc_auc": 0.9413403053624627
+      },
+      "center_crop_80": {
+        "f1": 0.935080405002978,
+        "roc_auc": 0.9282755089374379
+      },
+      "screenshot_like": {
+        "f1": 0.9575971731448764,
+        "roc_auc": 0.9458555734856008
+      }
+    },
+    "cpu_latency": {
+      "runs": 100,
+      "mean_ms": 9.354495830029919,
+      "p50_ms": 9.2165420001038,
+      "p95_ms": 11.964324050859432,
+      "torch_threads": 4,
+      "process_rss_mb": 772.94140625
+    }
+  },
+  "created_utc": "2026-10-16T05:41:06.698433+00:00",
+  "promoted": true
+}

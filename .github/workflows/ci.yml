@@ -27,8 +27,25 @@ jobs:
         run: |
           python -c "import verisight_ai, verisight_ai.cli, verisight_ai.pipeline"
           python -c "from verisight_ai.config import load_config; load_config('configs/default.yaml')"
-      - name: Tests (no GPU, no secrets, no real dataset)
-        run: pytest
+      - name: Tests (fast — no GPU, no secrets, no real dataset)
+        run: pytest -m "not slow"
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU PyTorch and pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements/torch.txt
+          pip install -r requirements/dev.lock.txt
+          pip install --no-deps -e .
+      - name: Smoke test (end-to-end demo pipeline)
+        run: pytest -m slow -v
 
   docker:
     runs-on: ubuntu-latest

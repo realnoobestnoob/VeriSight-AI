@@ -2,11 +2,15 @@
 
 **AI-generated image detector.** Upload or photograph an image to get a probabilistic estimate of whether it resembles AI-generated content from the model's training data.
 
-VeriSight is a **triage aid**, not an authenticity oracle. A high score means resemblance to the AI-generated class seen during training — it is not proof that an image is fake, and a low score is not proof that it is authentic.
+VeriSight is a **triage aid**, not an authenticity oracle. A high score means resemblance to the AI-generated class seen during training. It is not proof that an image is fake, and a low score is not proof that it is authentic.
+
+| Real Image | Fake Image |
+| :---: | :---: |
+| ![Real image](image.png) | ![Fake image](image-1.png) |
 
 ---
 
-## Verification status (read this first)
+## Verification status
 
 This repository was generated and checked in a sandbox **without PyTorch** (the wheel could not be downloaded there). Be precise about what has and has not been run:
 

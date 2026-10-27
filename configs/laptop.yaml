@@ -1,0 +1,63 @@
+# VeriSight AI — CPU laptop config.
+# A small balanced subset of Defactify for fast local iteration (no GPU needed).
+# Run time: ~15-25 min on a modern CPU laptop.
+# Run: python -m verisight_ai.cli pipeline --config configs/laptop.yaml
+#
+# NOTE: max_per_class caps both classes equally, producing a balanced 1:1 subset.
+# This differs from Defactify's natural ~5:1 FAKE:REAL ratio.
+# Use configs/defactify.yaml for a ratio-preserving full training run.
+pipeline_version: "0.1.0"
+seed: 42
+output_dir: training_outputs
+
+data:
+  root: data/defactify
+  dataset_name: Defactify-laptop
+  dataset_version: "unset — fill in your download date: YYYY-MM-DD"
+  dataset_source: "https://huggingface.co/datasets/Rajarshi-Roy-research/Defactify_Image_Dataset"
+  val_fraction: 0.15
+  test_fraction: 0.15
+  max_per_class: 2000             # ~4 000 images total; keeps CPU run under 30 min
+  near_duplicate_max_hamming: null
+  external_root: null
+  external_name: null
+
+model:
+  architecture: mobilenet_v3_small
+  pretrained: true
+  image_size: 128
+
+train:
+  batch_size: 32
+  num_workers: 0                  # must be 0 on Windows; safe on all platforms
+  device: cpu
+  weight_decay: 0.0001
+  head:
+    epochs: 3
+    lr: 0.001
+  finetune:
+    enabled: false                # skip fine-tuning to keep the run short
+  early_stopping_patience: 2
+  class_weighting: true
+
+calibration:
+  enabled: true
+
+decision:
+  abstain_margin: 0.10
+
+evaluation:
+  robustness_max_images: 200
+  latency_warmup: 5
+  latency_runs: 20
+
+mlflow:
+  enabled: true
+  tracking_uri: sqlite:///mlflow.db
+  experiment_name: VeriSight AI — Laptop
+
+release:
+  min_test_roc_auc: null          # set after your first baseline run
+  min_test_f1: null
+  max_cpu_latency_p95_ms: null
+  require_external_eval: false
