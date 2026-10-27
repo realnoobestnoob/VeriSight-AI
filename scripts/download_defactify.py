@@ -79,8 +79,10 @@ def download(out: Path, splits: list[str], max_per_split: int | None) -> None:
                 break
 
         total_written = sum(counters.values())
-        print(f"   Written: REAL={counters['REAL']:,}  FAKE={counters['FAKE']:,}  "
-              f"total={total_written:,}")
+        print(
+            f"   Written: REAL={counters['REAL']:,}  FAKE={counters['FAKE']:,}  "
+            f"total={total_written:,}"
+        )
         if counters["REAL"] == 0 or counters["FAKE"] == 0:
             print("   WARNING: one class has 0 images — check the Label_A mapping.")
 
@@ -91,11 +93,19 @@ def download(out: Path, splits: list[str], max_per_split: int | None) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--out", default="data/defactify", help="Output root folder")
-    p.add_argument("--split", action="append", dest="splits",
-                   help="HF split to download (train / validation / test). "
-                        "Repeat to download multiple. Default: all three.")
-    p.add_argument("--max-per-split", type=int, default=None,
-                   help="Stop after this many images per split (for quick tests)")
+    p.add_argument(
+        "--split",
+        action="append",
+        dest="splits",
+        help="HF split to download (train / validation / test). "
+        "Repeat to download multiple. Default: all three.",
+    )
+    p.add_argument(
+        "--max-per-split",
+        type=int,
+        default=None,
+        help="Stop after this many images per split (for quick tests)",
+    )
     args = p.parse_args()
     splits = args.splits or list(HF_SPLIT_MAP.keys())
     unknown = [s for s in splits if s not in HF_SPLIT_MAP]

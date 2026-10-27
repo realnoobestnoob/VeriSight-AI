@@ -65,6 +65,7 @@ else:
 
 st.button("Analyse", type="primary", disabled=data is None, key="analyse_btn")
 
+
 # ── Analysis ───────────────────────────────────────────────────────────────────
 def _record(input_type, file_type, file_hash, status, error=None, result=None):
     return repo.record_scan(
@@ -126,10 +127,12 @@ if st.session_state.get("analyse_btn"):
                     "original": decoded.image,
                     "scan_id": scan_id,
                 }
-                st.session_state["history"].append({
-                    "verdict": result.decision_label,
-                    "score": round(result.score_used, 3),
-                })
+                st.session_state["history"].append(
+                    {
+                        "verdict": result.decision_label,
+                        "score": round(result.score_used, 3),
+                    }
+                )
 
 # ── Results ────────────────────────────────────────────────────────────────────
 last = st.session_state.get("last")

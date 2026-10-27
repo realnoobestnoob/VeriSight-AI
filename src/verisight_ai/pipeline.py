@@ -86,9 +86,7 @@ def _write_checkpoint(run_dir: Path, stage: int, run_ts: str) -> None:
     Uses a tmp-file + rename so a crash mid-write never leaves a partial file.
     """
     tmp = run_dir / (_CKPT_FILE + ".tmp")
-    tmp.write_text(
-        json.dumps({"last_stage": stage, "run_ts": run_ts}, indent=2), encoding="utf-8"
-    )
+    tmp.write_text(json.dumps({"last_stage": stage, "run_ts": run_ts}, indent=2), encoding="utf-8")
     tmp.replace(run_dir / _CKPT_FILE)
 
 
@@ -98,6 +96,7 @@ def _read_checkpoint(run_dir: Path) -> dict:
 
 
 # ── Per-stage artifact loaders (used on resume) ────────────────────────────────
+
 
 def _resume_stage1(run_dir: Path):
     """Reload manifest DataFrame and manifest_meta dict from stage-1 disk output."""
@@ -111,9 +110,7 @@ def _resume_stage1(run_dir: Path):
 
 def _resume_stage2(run_dir: Path, cfg: PipelineConfig, device):
     """Reload model (on device) and raw state_dict from stage-2 disk output."""
-    state_dict = torch.load(
-        run_dir / "best_checkpoint.pt", map_location="cpu", weights_only=True
-    )
+    state_dict = torch.load(run_dir / "best_checkpoint.pt", map_location="cpu", weights_only=True)
     model = build_model(cfg.model.architecture, pretrained=False)
     model.load_state_dict(state_dict)
     model.to(device).eval()
@@ -122,9 +119,7 @@ def _resume_stage2(run_dir: Path, cfg: PipelineConfig, device):
 
 def _resume_stage3(run_dir: Path) -> tuple[dict, float, dict]:
     """Reload calibration and decision from stage-3 disk output."""
-    data = json.loads(
-        (run_dir / "calibration_decision.json").read_text(encoding="utf-8")
-    )
+    data = json.loads((run_dir / "calibration_decision.json").read_text(encoding="utf-8"))
     calibration = data["calibration"]
     decision = data["decision"]
     temperature = calibration["temperature"] if calibration.get("applied") else 1.0
@@ -139,6 +134,7 @@ def _resume_stage4(run_dir: Path) -> dict:
 
 # ── Pipeline orchestrator ──────────────────────────────────────────────────────
 
+
 def run_pipeline(cfg: PipelineConfig, resume_dir: Path | None = None) -> dict:
     device = validate_environment(cfg)
     device_str = device.type  # "cpu" | "cuda" | "mps"
@@ -151,9 +147,7 @@ def run_pipeline(cfg: PipelineConfig, resume_dir: Path | None = None) -> dict:
         cp = _read_checkpoint(run_dir)
         last_done = cp.get("last_stage", 0)
         run_ts = cp.get("run_ts", run_dir.name.removeprefix("run-"))
-        log.info(
-            "Resuming %s — last completed stage: %d/5", run_dir.name, last_done
-        )
+        log.info("Resuming %s — last completed stage: %d/5", run_dir.name, last_done)
         print(
             f"\nResuming {run_dir.name}"
             f"  —  stages 1–{last_done} already done,"
@@ -370,9 +364,7 @@ def run_pipeline(cfg: PipelineConfig, resume_dir: Path | None = None) -> dict:
                 model, test_df, root, cfg, device, temperature, decision["threshold"]
             )
             metrics["internal_test"] = test_metrics
-            plots = save_plots(
-                t_labels, t_scores, test_metrics, run_dir / "plots", "internal_test"
-            )
+            plots = save_plots(t_labels, t_scores, test_metrics, run_dir / "plots", "internal_test")
 
             if cfg.data.external_root:
                 try:
@@ -396,9 +388,7 @@ def run_pipeline(cfg: PipelineConfig, resume_dir: Path | None = None) -> dict:
                 except DataValidationError as exc:
                     log.warning("External evaluation skipped: %s", exc)
             else:
-                log.warning(
-                    "No external dataset configured; domain shift has NOT been evaluated."
-                )
+                log.warning("No external dataset configured; domain shift has NOT been evaluated.")
 
             robustness = robustness_suite(
                 model, test_df, root, cfg, device, temperature, decision["threshold"]

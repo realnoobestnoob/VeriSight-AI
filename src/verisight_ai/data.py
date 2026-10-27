@@ -143,9 +143,7 @@ def build_manifest(cfg: DataConfig, seed: int) -> tuple[pd.DataFrame, DataReport
             val_labels = [CLASS_MAPPING[c] for _, c in val_items]
             if len(set(val_labels)) < 2:
                 raise DataValidationError("Val data must contain both REAL and FAKE images.")
-            log.info(
-                "Official val/ folder found — using as-is (%d images).", len(val_items)
-            )
+            log.info("Official val/ folder found — using as-is (%d images).", len(val_items))
             frames += [
                 _frame(train_items, np.arange(len(train_items)), "train", root),
                 _frame(val_items, np.arange(len(val_items)), "val", root),

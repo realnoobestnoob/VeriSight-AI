@@ -82,13 +82,12 @@ def add_images(source: Path, dest_root: Path, split: str, existing_hashes: dict[
 
         # Find the highest existing index
         existing = [f.name for f in dest_folder.glob(f"{class_name}_*.jpg")]
-        max_idx = max(
-            [int(f.split("_")[1].split(".")[0]) for f in existing] or [0]
+        max_idx = max([int(f.split("_")[1].split(".")[0]) for f in existing] or [0])
+
+        images = sorted(
+            [p for p in src_folder.glob("*") if p.is_file() and p.suffix.lower() in ALLOWED_FORMATS]
         )
 
-        images = sorted([p for p in src_folder.glob("*") 
-                        if p.is_file() and p.suffix.lower() in ALLOWED_FORMATS])
-        
         for src_img in images:
             h = sha256_file(src_img)
             if h in existing_hashes[class_name]:
@@ -114,11 +113,20 @@ def add_images(source: Path, dest_root: Path, split: str, existing_hashes: dict[
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("--source", required=True, help="Source folder with REAL/ and/or FAKE/ subfolders")
-    p.add_argument("--split", required=True, choices=["train", "val", "test"],
-                   help="Which split to add images to")
-    p.add_argument("--data-root", default="data/defactify", 
-                   help="Root of the dataset folder (default: data/defactify)")
+    p.add_argument(
+        "--source", required=True, help="Source folder with REAL/ and/or FAKE/ subfolders"
+    )
+    p.add_argument(
+        "--split",
+        required=True,
+        choices=["train", "val", "test"],
+        help="Which split to add images to",
+    )
+    p.add_argument(
+        "--data-root",
+        default="data/defactify",
+        help="Root of the dataset folder (default: data/defactify)",
+    )
     args = p.parse_args()
 
     source = Path(args.source).resolve()
@@ -140,7 +148,9 @@ def main() -> None:
     if skipped["REAL"] + skipped["FAKE"] > 0:
         log.info(f"⊘ Skipped (duplicates): REAL={skipped['REAL']}, FAKE={skipped['FAKE']}")
 
-    log.info("Dataset extended. Next: run `python -m verisight_ai.cli pipeline --config configs/default.yaml`")
+    log.info(
+        "Dataset extended. Next: run `python -m verisight_ai.cli pipeline --config configs/default.yaml`"
+    )
 
 
 if __name__ == "__main__":
